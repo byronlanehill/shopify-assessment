@@ -1,0 +1,125 @@
+name: Deploy Preview
+on: pull_request
+jobs:
+  deploy:
+    name: Create
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get Date
+        id: date
+        run: echo "date=$(date +'%d-%m-%Y ')" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Get Time
+        id: time
+        run: echo "time=$(date +'%H:%M:%S')" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Get Previous Comment
+        uses: peter-evans/find-comment@v2
+        id: previous-comment
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "<!-- PR ID:${{ github.event.pull_request.number }} -->"
+
+      - name: Get Theme ID
+        id: theme
+        run: echo "id=`grep -o -P "(?<=\<\!\-\-\ Theme ID\:).*(?=\ \-\-\>)" <<< '${{ steps.previous-comment.outputs.comment-body }}'`" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Create Loading Comment
+        id: loading-comment
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          comment-id: ${{ steps.previous-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ## Shopify Deploy Preview
+            | Name | Status | Theme ID | Preview | Date | Time |
+            | :--- | :--- | :--- | :--- | :--- | :--- |
+            | ${{ secrets.SHOPIFY_STORE }} | 🔄 Loading | ${{ steps.theme.outputs.id }} | <a href="${{ secrets.SHOPIFY_STORE }}?preview_theme_id=${{ steps.theme.outputs.id }}">Preview</a> | ${{ steps.date.outputs.date }} | ${{ steps.time.outputs.time }} |
+            <!-- PR ID:${{ github.event.pull_request.number }} -->
+            <!-- Theme ID:${{ steps.theme.outputs.id }} -->
+          edit-mode: replace
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: 3.1
+          bundler: "latest"
+
+      - name: Install Shopify CLI
+        run: npm install -g @shopify/cli @shopify/theme
+
+      - name: Create Theme
+        if: ${{ steps.theme.outputs.id == '' }}
+        id: create
+        shell: bash
+        env:
+          SHOPIFY_FLAG_STORE: ${{ secrets.SHOPIFY_STORE }}
+          SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.SHOPIFY_CLI_THEME_TOKEN }}
+        run: |
+          echo 'JSON_RESPONSE<<EOF' >> $GITHUB_OUTPUT
+          shopify theme push --unpublished --json --theme=$GITHUB_HEAD_REF >> $GITHUB_OUTPUT || true
+          echo 'EOF' >> $GITHUB_OUTPUT
+
+      - name: Update Theme
+        if: ${{ steps.theme.outputs.id }}
+        id: update
+        shell: bash
+        env:
+          SHOPIFY_FLAG_STORE: ${{ secrets.SHOPIFY_STORE }}
+          SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.SHOPIFY_CLI_THEME_TOKEN }}
+        run: |
+          echo 'JSON_RESPONSE<<EOF' >> $GITHUB_OUTPUT
+          shopify theme push --json --theme=${{ steps.theme.outputs.id }} >> $GITHUB_OUTPUT || true
+          echo 'EOF' >> $GITHUB_OUTPUT
+
+      - name: Format Link
+        id: temp
+        shell: bash
+        run: |
+          echo '${{ steps.create.outputs.JSON_RESPONSE || steps.update.outputs.JSON_RESPONSE }}' > 'temp.txt'
+          echo 'LINK<<DEL' >> $GITHUB_OUTPUT
+          tail -n1 temp.txt >> $GITHUB_OUTPUT
+          echo 'DEL' >> $GITHUB_OUTPUT
+
+      - name: Create Ready Comment
+        if: ${{ !failure() }}
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          comment-id: ${{ steps.loading-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ### Shopify Deploy Preview
+            | Name | Status | Theme ID | Preview | Date | Time |
+            | :--- | :--- | :--- | :--- | :--- | :--- |
+            | ${{ secrets.SHOPIFY_STORE }} | ✅ Ready | ${{ fromJSON(steps.temp.outputs.LINK).theme.id }} | <a href="${{ fromJSON(steps.temp.outputs.LINK).theme.preview_url }}">Preview</a> | ${{ steps.date.outputs.date }} | ${{ steps.time.outputs.time }} |
+            ### Browserstack Device Testing
+            | ${{ secrets.BROWSERSTACK_DEVICE_1 }} | ${{ secrets.BROWSERSTACK_DEVICE_2 }} | ${{ secrets.BROWSERSTACK_DEVICE_3 }} | ${{ secrets.BROWSERSTACK_DEVICE_4 }} |
+            | :--- | :--- | :--- | :--- |
+            | <a href="${{ secrets.BROWSERSTACK_URL_1 }}">Preview</a> | <a href="${{ secrets.BROWSERSTACK_URL_2 }}">Preview</a> | <a href="${{ secrets.BROWSERSTACK_URL_3 }}">Preview</a> | <a href="${{ secrets.BROWSERSTACK_URL_4 }}">Preview</a> |
+            <!-- PR ID:${{ github.event.pull_request.number }} -->
+            <!-- Theme ID:${{ fromJSON(steps.temp.outputs.LINK).theme.id }} -->
+          edit-mode: replace
+
+      - name: Create Failed Comment
+        if: ${{ failure() }}
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          comment-id: ${{ steps.loading-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ### Shopify Deploy Preview
+            | Name | Status | Theme ID | Preview | Date | Time |
+            | :--- | :--- | :--- | :--- | :--- | :--- |
+            | ${{ secrets.SHOPIFY_STORE }} | ❌ Failed | - | - | ${{ steps.date.outputs.date }} | ${{ steps.time.outputs.time }} |
+            <!-- PR ID:${{ github.event.pull_request.number }} -->
+            <!-- Theme ID:${{ fromJSON(steps.temp.outputs.LINK).theme.id }} -->
+          edit-mode: replace

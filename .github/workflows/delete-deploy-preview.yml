@@ -1,0 +1,85 @@
+name: Deploy Preview
+on:
+  pull_request:
+    types:
+      - closed
+jobs:
+  deploy:
+    name: Delete
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get Date
+        id: date
+        run: echo "date=$(date +'%d-%m-%Y ')" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Get Time
+        id: time
+        run: echo "time=$(date +'%H:%M:%S')" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Get Previous Comment
+        uses: peter-evans/find-comment@v2
+        id: previous-comment
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "<!-- PR ID:${{ github.event.pull_request.number }} -->"
+
+      - name: Get Theme ID
+        id: theme
+        run: echo "id=`grep -o -P "(?<=\<\!\-\-\ Theme ID\:).*(?=\ \-\-\>)" <<< '${{ steps.previous-comment.outputs.comment-body }}'`" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Create Loading Comment
+        id: loading-comment
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          comment-id: ${{ steps.previous-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ## Shopify Deploy Preview
+            | Name | Status | Theme ID | Preview | Date | Time |
+            | :--- | :--- | :--- | :--- | :--- | :--- |
+            | ${{ secrets.SHOPIFY_STORE }} | 🔄 Loading | ${{ steps.theme.outputs.id }} | <a href="${{ secrets.SHOPIFY_STORE }}?preview_theme_id=${{ steps.theme.outputs.id }}">Preview</a> | ${{ steps.date.outputs.date }} | ${{ steps.time.outputs.time }} |
+            <!-- PR ID:${{ github.event.pull_request.number }} -->
+            <!-- Theme ID:${{ steps.theme.outputs.id }} -->
+          edit-mode: replace
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: 3.1
+          bundler: "latest"
+
+      - name: Install Shopify CLI
+        run: npm install -g @shopify/cli @shopify/theme
+
+      - name: Delete Theme
+        continue-on-error: true
+        if: ${{ steps.theme.outputs.id }}
+        id: delete
+        shell: bash
+        env:
+          SHOPIFY_FLAG_STORE: ${{ secrets.SHOPIFY_STORE }}
+          SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.SHOPIFY_CLI_THEME_TOKEN }}
+        run: shopify theme delete --force --theme=${{ steps.theme.outputs.id }}
+
+      - name: Create Deleted Comment
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          comment-id: ${{ steps.loading-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ### Shopify Deploy Preview
+            | Name | Status | Theme ID | Preview | Date | Time |
+            | :--- | :--- | :--- | :--- | :--- | :--- |
+            | ${{ secrets.SHOPIFY_STORE }} | 🗑️ Deleted | ${{ steps.theme.outputs.id }} | <a href="${{ secrets.SHOPIFY_STORE }}?preview_theme_id=${{ steps.theme.outputs.id }}">Preview</a> | ${{ steps.date.outputs.date }} | ${{ steps.time.outputs.time }}
+            <!-- PR ID:${{ github.event.pull_request.number }}  -->
+            <!-- Theme ID:${{ steps.theme.outputs.id }} -->
+          edit-mode: replace
