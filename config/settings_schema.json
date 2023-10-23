@@ -1457,7 +1457,18 @@
         "id": "cart_drawer_collection",
         "label": "t:settings_schema.cart.settings.cart_drawer.collection.label",
         "info": "t:settings_schema.cart.settings.cart_drawer.collection.info"
+      },
+      {
+        "type": "range",
+        "id": "free_shipping_threshold",
+        "label": "Free Shipping Threshold",
+        "min": 0,
+        "max": 2000,
+        "step": 10,
+        "default": 1000,
+        "unit": "CAD"
       }
+      
     ]
   }
 ]
